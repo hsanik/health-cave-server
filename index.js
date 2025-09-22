@@ -1,7 +1,7 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
-const { MongoClient } = require('mongodb');
+const { MongoClient, ServerApiVersion } = require('mongodb');
 const app = express();
 const port = process.env.PORT || 3000;
 app.use(cors());
@@ -23,7 +23,12 @@ async function run() {
         await client.connect();
         console.log("Connected to MongoDB");
 
-        const groupsCollection = client.db("healthCave").collection("groups");
+        const doctorsCollection = client.db("healthCave").collection("doctors");
+
+        app.get("/doctors", async (req, res) => {
+            const result = await doctorsCollection.find().toArray();
+            res.send(result);
+        });
 
         await client.db("admin").command({ ping: 1 });
         console.log("Pinged your deployment. You successfully connected to MongoDB!");
