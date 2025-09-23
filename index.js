@@ -31,7 +31,7 @@ async function run() {
             res.send(result);
         });
 
-        // GET single doctor by id
+        
         app.get("/doctors/:id", async (req, res) => {
             const { id } = req.params;
             try {
