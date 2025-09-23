@@ -41,8 +41,6 @@ async function run() {
             } catch (err) {
                 console.error(err);
                 res.status(500).send({ error: "Failed to fetch doctor" });
-                
-                
             }
         });
 
