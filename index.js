@@ -31,7 +31,7 @@ async function run() {
             res.send(result);
         });
 
-        
+
         app.get("/doctors/:id", async (req, res) => {
             const { id } = req.params;
             try {
@@ -43,6 +43,43 @@ async function run() {
                 res.status(500).send({ error: "Failed to fetch doctor" });
             }
         });
+
+
+        /* ====================Api For Doctor Apply=================== */
+        const doctorsApplyCollection = client.db("healthCave").collection("doctorApply");
+
+        // POST doctor application
+        app.post("/doctorApply", async (req, res) => {
+            try {
+                const application = req.body;
+
+                // ensure default role
+                if (!application.role) {
+                    application.role = "user";
+                }
+
+                const result = await doctorsApplyCollection.insertOne(application);
+                res.status(201).send(result);
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to submit application" });
+            }
+        });
+
+        // GET all doctor applications
+        app.get("/doctorApply", async (req, res) => {
+            try {
+                const result = await doctorsApplyCollection.find().toArray();
+                res.send(result);
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to fetch applications" });
+            }
+        });
+
+
+
+
 
         await client.db("admin").command({ ping: 1 });
         console.log("Pinged your deployment. You successfully connected to MongoDB!");
