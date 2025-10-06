@@ -78,6 +78,42 @@ async function run() {
         });
 
 
+        // POST approve application (move to doctors collection)
+        app.post("/makeDoctor", async (req, res) => {
+            try {
+                const doctorData = req.body;
+                const id = doctorData._id;
+                delete doctorData._id; // remove old ID so Mongo generates new one
+
+                // Insert into doctors collection
+                const result = await doctorsCollection.insertOne(doctorData);
+
+                // Remove from doctorApply collection
+                await doctorsApplyCollection.deleteOne({ _id: new ObjectId(id) });
+
+                res.status(201).send(result);
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to approve doctor" });
+            }
+        });
+
+        // DELETE cancel application
+        app.delete("/doctorApply/:id", async (req, res) => {
+            try {
+                const { id } = req.params;
+                const result = await doctorsApplyCollection.deleteOne({
+                    _id: new ObjectId(id),
+                });
+                res.send(result);
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to delete application" });
+            }
+        });
+
+
+
 
 
 
