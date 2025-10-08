@@ -112,6 +112,21 @@ async function run() {
             }
         });
 
+        /* ================Doctor List On dashboard========================= */
+
+        // DELETE doctor by ID
+        app.delete("/doctors/:id", async (req, res) => {
+            try {
+                const { id } = req.params;
+                const result = await doctorsCollection.deleteOne({ _id: new ObjectId(id) });
+                res.send(result);
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to delete doctor" });
+            }
+        });
+
+
 
 
 
