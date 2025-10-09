@@ -83,6 +83,10 @@ async function run() {
             try {
                 const doctorData = req.body;
                 const id = doctorData._id;
+
+                // Add userId to doctor data (this should match the authenticated user's session ID)
+                doctorData.userId = doctorData.userId || id; // Fallback to application ID if userId not provided
+
                 delete doctorData._id; // remove old ID so Mongo generates new one
 
                 // Insert into doctors collection
@@ -138,10 +142,19 @@ async function run() {
                     return res.status(400).send({ error: "Invalid availability data" });
                 }
 
-                const result = await doctorsCollection.updateOne(
+                // Try to update by _id first, then by userId if not found
+                let result = await doctorsCollection.updateOne(
                     { _id: new ObjectId(id) },
                     { $set: { availability: availability } }
                 );
+
+                if (result.matchedCount === 0) {
+                    // Try updating by userId
+                    result = await doctorsCollection.updateOne(
+                        { userId: id },
+                        { $set: { availability: availability } }
+                    );
+                }
 
                 if (result.matchedCount === 0) {
                     return res.status(404).send({ error: "Doctor not found" });
@@ -158,10 +171,20 @@ async function run() {
         app.get("/doctors/:id/availability", async (req, res) => {
             try {
                 const { id } = req.params;
-                const doctor = await doctorsCollection.findOne(
+
+                // Try to find by _id first, then by userId if not found
+                let doctor = await doctorsCollection.findOne(
                     { _id: new ObjectId(id) },
                     { projection: { availability: 1 } }
                 );
+
+                if (!doctor) {
+                    // Try finding by userId
+                    doctor = await doctorsCollection.findOne(
+                        { userId: id },
+                        { projection: { availability: 1 } }
+                    );
+                }
 
                 if (!doctor) {
                     return res.status(404).send({ error: "Doctor not found" });
@@ -171,6 +194,30 @@ async function run() {
             } catch (err) {
                 console.error(err);
                 res.status(500).send({ error: "Failed to fetch availability" });
+            }
+        });
+
+        // GET check if user is a doctor
+        app.get("/doctors/check/:userId", async (req, res) => {
+            try {
+                const { userId } = req.params;
+
+                // Check if user exists in doctors collection (by userId or _id)
+                const doctor = await doctorsCollection.findOne({
+                    $or: [
+                        { _id: new ObjectId(userId) },
+                        { userId: userId }
+                    ]
+                });
+
+                if (doctor) {
+                    res.send({ isDoctor: true, doctor: doctor });
+                } else {
+                    res.send({ isDoctor: false });
+                }
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to check doctor status" });
             }
         });
 
