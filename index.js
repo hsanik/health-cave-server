@@ -126,11 +126,53 @@ async function run() {
             }
         });
 
+        /* ================Doctor Availability Management================== */
 
+        // PUT update doctor availability
+        app.put("/doctors/:id/availability", async (req, res) => {
+            try {
+                const { id } = req.params;
+                const { availability } = req.body;
 
+                if (!availability || !Array.isArray(availability)) {
+                    return res.status(400).send({ error: "Invalid availability data" });
+                }
 
+                const result = await doctorsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: { availability: availability } }
+                );
 
+                if (result.matchedCount === 0) {
+                    return res.status(404).send({ error: "Doctor not found" });
+                }
 
+                res.send({ message: "Availability updated successfully" });
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to update availability" });
+            }
+        });
+
+        // GET doctor availability
+        app.get("/doctors/:id/availability", async (req, res) => {
+            try {
+                const { id } = req.params;
+                const doctor = await doctorsCollection.findOne(
+                    { _id: new ObjectId(id) },
+                    { projection: { availability: 1 } }
+                );
+
+                if (!doctor) {
+                    return res.status(404).send({ error: "Doctor not found" });
+                }
+
+                res.send({ availability: doctor.availability || [] });
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to fetch availability" });
+            }
+        });
 
         await client.db("admin").command({ ping: 1 });
         console.log("Pinged your deployment. You successfully connected to MongoDB!");
