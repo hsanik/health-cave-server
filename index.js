@@ -202,12 +202,20 @@ async function run() {
             try {
                 const { userId } = req.params;
 
-                // Check if user exists in doctors collection (by userId or _id)
+                // Build query conditions
+                const queryConditions = [{ userId: userId }];
+
+                // Only add ObjectId condition if userId is a valid ObjectId
+                try {
+                    const objectId = new ObjectId(userId);
+                    queryConditions.push({ _id: objectId });
+                } catch (e) {
+                    // userId is not a valid ObjectId, skip the _id condition
+                }
+
+                // Check if user exists in doctors collection
                 const doctor = await doctorsCollection.findOne({
-                    $or: [
-                        { _id: new ObjectId(userId) },
-                        { userId: userId }
-                    ]
+                    $or: queryConditions
                 });
 
                 if (doctor) {
