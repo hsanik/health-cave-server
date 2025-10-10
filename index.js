@@ -9,7 +9,6 @@ app.use(cors());
 app.use(express.json());
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.g6mzkoi.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
-console.log(process.env.DB_USER, process.env.DB_PASS);
 
 const client = new MongoClient(uri, {
     serverApi: {
@@ -25,10 +24,29 @@ async function run() {
         console.log("Connected to MongoDB");
 
         const doctorsCollection = client.db("healthCave").collection("doctors");
+        const usersCollection = client.db("healthCave").collection("users");
 
         app.get("/doctors", async (req, res) => {
             const result = await doctorsCollection.find().toArray();
             res.send(result);
+        });
+
+
+        // GET check if user is a doctor by email
+        app.get("/doctors/check-by-email/:email", async (req, res) => {
+            try {
+                const { email } = req.params;
+                const doctor = await doctorsCollection.findOne({ email: email });
+
+                if (doctor) {
+                    res.send({ isDoctor: true, doctor: doctor });
+                } else {
+                    res.send({ isDoctor: false });
+                }
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to check doctor status" });
+            }
         });
 
 
@@ -84,9 +102,25 @@ async function run() {
                 const doctorData = req.body;
                 const id = doctorData._id;
 
-                // Add userId to doctor data (this should match the authenticated user's session ID)
-                doctorData.userId = doctorData.userId || id; // Fallback to application ID if userId not provided
+                const existingUser = await usersCollection.findOne({ email: doctorData.email });
 
+                // Update existing user with doctor information
+                await usersCollection.updateOne(
+                    { _id: existingUser._id },
+                    { 
+                        $set: {
+                            name: doctorData.name,
+                            phone: doctorData.phone,
+                            specialization: doctorData.specialization,
+                            experience: doctorData.experience,
+                            hospital: doctorData.hospital,
+                            role: "doctor" // Mark user as doctor
+                        }
+                    }
+                );
+
+                // Add userId to doctor data (use existing user's ID)
+                doctorData.userId = existingUser._id.toString();
                 delete doctorData._id; // remove old ID so Mongo generates new one
 
                 // Insert into doctors collection
@@ -95,7 +129,13 @@ async function run() {
                 // Remove from doctorApply collection
                 await doctorsApplyCollection.deleteOne({ _id: new ObjectId(id) });
 
-                res.status(201).send(result);
+                console.log(`Doctor approved: ${doctorData.email} (existing user)`);
+
+                res.status(201).send({
+                    message: "Doctor approved successfully",
+                    userId: existingUser._id.toString(),
+                    note: "User can continue using their existing login credentials"
+                });
             } catch (err) {
                 console.error(err);
                 res.status(500).send({ error: "Failed to approve doctor" });
@@ -194,38 +234,6 @@ async function run() {
             } catch (err) {
                 console.error(err);
                 res.status(500).send({ error: "Failed to fetch availability" });
-            }
-        });
-
-        // GET check if user is a doctor
-        app.get("/doctors/check/:userId", async (req, res) => {
-            try {
-                const { userId } = req.params;
-
-                // Build query conditions
-                const queryConditions = [{ userId: userId }];
-
-                // Only add ObjectId condition if userId is a valid ObjectId
-                try {
-                    const objectId = new ObjectId(userId);
-                    queryConditions.push({ _id: objectId });
-                } catch (e) {
-                    // userId is not a valid ObjectId, skip the _id condition
-                }
-
-                // Check if user exists in doctors collection
-                const doctor = await doctorsCollection.findOne({
-                    $or: queryConditions
-                });
-
-                if (doctor) {
-                    res.send({ isDoctor: true, doctor: doctor });
-                } else {
-                    res.send({ isDoctor: false });
-                }
-            } catch (err) {
-                console.error(err);
-                res.status(500).send({ error: "Failed to check doctor status" });
             }
         });
 
