@@ -8,8 +8,7 @@ const port = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.g6mzkoi.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
-console.log(process.env.DB_USER, process.env.DB_PASS);
+const uri = `${process.env.MONGODB_URI}`;
 
 const client = new MongoClient(uri, {
     serverApi: {
@@ -171,6 +170,168 @@ async function run() {
             } catch (err) {
                 console.error(err);
                 res.status(500).send({ error: "Failed to fetch availability" });
+            }
+        });
+
+        /* ================Appointment Management================== */
+        const appointmentsCollection = client.db("healthCave").collection("appointments");
+
+        // POST create appointment
+        app.post("/appointments", async (req, res) => {
+            try {
+                const appointmentData = req.body;
+                
+                // Add default fields
+                appointmentData.createdAt = new Date();
+                appointmentData.status = appointmentData.status || "pending";
+                appointmentData.paymentStatus = appointmentData.paymentStatus || "pending";
+
+                const result = await appointmentsCollection.insertOne(appointmentData);
+                res.status(201).send(result);
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to create appointment" });
+            }
+        });
+
+        // GET all appointments
+        app.get("/appointments", async (req, res) => {
+            try {
+                const result = await appointmentsCollection.find().toArray();
+                res.send(result);
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to fetch appointments" });
+            }
+        });
+
+        // GET appointments by user ID
+        app.get("/appointments/user/:userId", async (req, res) => {
+            try {
+                const { userId } = req.params;
+                const result = await appointmentsCollection.find({ userId: userId }).toArray();
+                res.send(result);
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to fetch user appointments" });
+            }
+        });
+
+        // GET appointments by doctor ID
+        app.get("/appointments/doctor/:doctorId", async (req, res) => {
+            try {
+                const { doctorId } = req.params;
+                const result = await appointmentsCollection.find({ doctorId: doctorId }).toArray();
+                res.send(result);
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to fetch doctor appointments" });
+            }
+        });
+
+        // PUT update appointment status
+        app.put("/appointments/:id/status", async (req, res) => {
+            try {
+                const { id } = req.params;
+                const { status } = req.body;
+
+                if (!["pending", "confirmed", "cancelled", "completed"].includes(status)) {
+                    return res.status(400).send({ error: "Invalid status" });
+                }
+
+                const result = await appointmentsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: { status: status, updatedAt: new Date() } }
+                );
+
+                if (result.matchedCount === 0) {
+                    return res.status(404).send({ error: "Appointment not found" });
+                }
+
+                res.send({ message: "Appointment status updated successfully" });
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to update appointment status" });
+            }
+        });
+
+        // PUT update payment status
+        app.put("/appointments/:id/payment", async (req, res) => {
+            try {
+                const { id } = req.params;
+                const { paymentStatus, paymentId, amount } = req.body;
+
+                console.log(`Updating payment status for appointment ${id}:`, { paymentStatus, paymentId, amount });
+
+                if (!["pending", "paid", "failed", "refunded"].includes(paymentStatus)) {
+                    return res.status(400).send({ error: "Invalid payment status" });
+                }
+
+                const updateData = { 
+                    paymentStatus: paymentStatus, 
+                    updatedAt: new Date() 
+                };
+
+                if (paymentId) updateData.paymentId = paymentId;
+                if (amount) updateData.amount = amount;
+
+                // If payment is successful, also update appointment status to confirmed
+                if (paymentStatus === 'paid') {
+                    updateData.status = 'confirmed';
+                }
+
+                const result = await appointmentsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: updateData }
+                );
+
+                if (result.matchedCount === 0) {
+                    console.log(`Appointment ${id} not found`);
+                    return res.status(404).send({ error: "Appointment not found" });
+                }
+
+                console.log(`Payment status updated successfully for appointment ${id}`);
+                res.send({ 
+                    message: "Payment status updated successfully",
+                    updated: result.modifiedCount > 0
+                });
+            } catch (err) {
+                console.error("Error updating payment status:", err);
+                res.status(500).send({ error: "Failed to update payment status" });
+            }
+        });
+
+        // DELETE appointment
+        app.delete("/appointments/:id", async (req, res) => {
+            try {
+                const { id } = req.params;
+                const result = await appointmentsCollection.deleteOne({ _id: new ObjectId(id) });
+                
+                if (result.deletedCount === 0) {
+                    return res.status(404).send({ error: "Appointment not found" });
+                }
+
+                res.send({ message: "Appointment deleted successfully" });
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to delete appointment" });
+            }
+        });
+
+        // GET appointment by ID
+        app.get("/appointments/:id", async (req, res) => {
+            try {
+                const { id } = req.params;
+                const appointment = await appointmentsCollection.findOne({ _id: new ObjectId(id) });
+                
+                if (!appointment) {
+                    return res.status(404).send({ error: "Appointment not found" });
+                }
+
+                res.send(appointment);
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to fetch appointment" });
             }
         });
 
