@@ -43,6 +43,34 @@ async function run() {
             }
         });
 
+        // PUT update doctor information
+        app.put("/doctors/:id", async (req, res) => {
+            try {
+                const { id } = req.params;
+                const updateData = req.body;
+
+                // Remove _id from update data if present
+                delete updateData._id;
+
+                // Add updatedAt timestamp
+                updateData.updatedAt = new Date();
+
+                const result = await doctorsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: updateData }
+                );
+
+                if (result.matchedCount === 0) {
+                    return res.status(404).send({ error: "Doctor not found" });
+                }
+
+                res.send({ message: "Doctor updated successfully" });
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to update doctor" });
+            }
+        });
+
 
         /* ====================Api For Doctor Apply=================== */
         const doctorsApplyCollection = client.db("healthCave").collection("doctorApply");
@@ -84,6 +112,13 @@ async function run() {
                 const id = doctorData._id;
                 delete doctorData._id; // remove old ID so Mongo generates new one
 
+                // Add default fields for new doctors
+                doctorData.consultationFee = doctorData.consultationFee || 100;
+                doctorData.availability = doctorData.availability || "Available";
+                doctorData.nextAvailable = doctorData.nextAvailable || "Today";
+                doctorData.patients = doctorData.patients || 0;
+                doctorData.createdAt = new Date();
+
                 // Insert into doctors collection
                 const result = await doctorsCollection.insertOne(doctorData);
 
@@ -94,6 +129,142 @@ async function run() {
             } catch (err) {
                 console.error(err);
                 res.status(500).send({ error: "Failed to approve doctor" });
+            }
+        });
+
+        // POST initialize missing doctor fields (one-time setup)
+        app.post("/doctors/initialize-fields", async (req, res) => {
+            try {
+                // Get all doctors
+                const doctors = await doctorsCollection.find({}).toArray();
+                let modifiedCount = 0;
+
+                for (const doctor of doctors) {
+                    const updateFields = {};
+                    let needsUpdate = false;
+
+                    // Add missing fields with default values
+                    if (!doctor.consultationFee) {
+                        updateFields.consultationFee = 100;
+                        needsUpdate = true;
+                    }
+                    if (!doctor.availability) {
+                        updateFields.availability = "Available";
+                        needsUpdate = true;
+                    }
+                    if (!doctor.nextAvailable) {
+                        updateFields.nextAvailable = "Today";
+                        needsUpdate = true;
+                    }
+                    if (doctor.patients === undefined || doctor.patients === null) {
+                        updateFields.patients = 0;
+                        needsUpdate = true;
+                    }
+
+                    if (needsUpdate) {
+                        updateFields.updatedAt = new Date();
+                        await doctorsCollection.updateOne(
+                            { _id: doctor._id },
+                            { $set: updateFields }
+                        );
+                        modifiedCount++;
+                    }
+                }
+
+                res.send({
+                    message: "Doctor fields initialized successfully",
+                    modifiedCount: modifiedCount
+                });
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to initialize doctor fields" });
+            }
+        });
+
+        // POST seed sample doctors (for development/testing)
+        app.post("/doctors/seed", async (req, res) => {
+            try {
+                const sampleDoctors = [
+                    {
+                        name: "Sarah Johnson",
+                        specialization: "Cardiology",
+                        hospital: "City General Hospital",
+                        image: "https://images.unsplash.com/photo-1559839734-2b71ea197ec2?w=400&h=400&fit=crop&crop=face",
+                        rating: 4.8,
+                        consultationFee: 150,
+                        availability: "Available",
+                        nextAvailable: "Today",
+                        patients: 1250,
+                        createdAt: new Date()
+                    },
+                    {
+                        name: "Michael Chen",
+                        specialization: "Neurology",
+                        hospital: "Metropolitan Medical Center",
+                        image: "https://images.unsplash.com/photo-1612349317150-e413f6a5b16d?w=400&h=400&fit=crop&crop=face",
+                        rating: 4.9,
+                        consultationFee: 180,
+                        availability: "Available",
+                        nextAvailable: "Tomorrow",
+                        patients: 980,
+                        createdAt: new Date()
+                    },
+                    {
+                        name: "Emily Rodriguez",
+                        specialization: "Pediatrics",
+                        hospital: "Children's Healthcare Center",
+                        image: "https://images.unsplash.com/photo-1594824475317-8b7b0c8b8b8b?w=400&h=400&fit=crop&crop=face",
+                        rating: 4.7,
+                        consultationFee: 120,
+                        availability: "Busy",
+                        nextAvailable: "Next Week",
+                        patients: 2100,
+                        createdAt: new Date()
+                    },
+                    {
+                        name: "David Thompson",
+                        specialization: "Orthopedics",
+                        hospital: "Sports Medicine Institute",
+                        image: "https://images.unsplash.com/photo-1582750433449-648ed127bb54?w=400&h=400&fit=crop&crop=face",
+                        rating: 4.6,
+                        consultationFee: 160,
+                        availability: "Available",
+                        nextAvailable: "Today",
+                        patients: 750,
+                        createdAt: new Date()
+                    },
+                    {
+                        name: "Lisa Wang",
+                        specialization: "Dermatology",
+                        hospital: "Skin Care Specialists",
+                        image: "https://images.unsplash.com/photo-1594824475317-8b7b0c8b8b8b?w=400&h=400&fit=crop&crop=face",
+                        rating: 4.9,
+                        consultationFee: 140,
+                        availability: "Available",
+                        nextAvailable: "Tomorrow",
+                        patients: 1800,
+                        createdAt: new Date()
+                    }
+                ];
+
+                // Check if doctors already exist to avoid duplicates
+                const existingCount = await doctorsCollection.countDocuments();
+
+                if (existingCount === 0) {
+                    const result = await doctorsCollection.insertMany(sampleDoctors);
+                    res.send({
+                        message: "Sample doctors seeded successfully",
+                        insertedCount: result.insertedCount
+                    });
+                } else {
+                    res.send({
+                        message: "Doctors already exist in database",
+                        existingCount: existingCount
+                    });
+                }
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to seed doctors" });
             }
         });
 
@@ -180,13 +351,26 @@ async function run() {
         app.post("/appointments", async (req, res) => {
             try {
                 const appointmentData = req.body;
-                
+
                 // Add default fields
                 appointmentData.createdAt = new Date();
                 appointmentData.status = appointmentData.status || "pending";
                 appointmentData.paymentStatus = appointmentData.paymentStatus || "pending";
 
                 const result = await appointmentsCollection.insertOne(appointmentData);
+
+                // Update doctor's patient count when appointment is confirmed/completed
+                if (appointmentData.doctorId && (appointmentData.status === "confirmed" || appointmentData.status === "completed")) {
+                    try {
+                        await doctorsCollection.updateOne(
+                            { _id: new ObjectId(appointmentData.doctorId) },
+                            { $inc: { patients: 1 } }
+                        );
+                    } catch (updateErr) {
+                        console.log("Failed to update doctor patient count:", updateErr);
+                    }
+                }
+
                 res.status(201).send(result);
             } catch (err) {
                 console.error(err);
@@ -239,13 +423,27 @@ async function run() {
                     return res.status(400).send({ error: "Invalid status" });
                 }
 
+                // Get the appointment to check previous status
+                const appointment = await appointmentsCollection.findOne({ _id: new ObjectId(id) });
+                if (!appointment) {
+                    return res.status(404).send({ error: "Appointment not found" });
+                }
+
                 const result = await appointmentsCollection.updateOne(
                     { _id: new ObjectId(id) },
                     { $set: { status: status, updatedAt: new Date() } }
                 );
 
-                if (result.matchedCount === 0) {
-                    return res.status(404).send({ error: "Appointment not found" });
+                // Update doctor's patient count when appointment is completed for the first time
+                if (appointment.doctorId && status === "completed" && appointment.status !== "completed") {
+                    try {
+                        await doctorsCollection.updateOne(
+                            { _id: new ObjectId(appointment.doctorId) },
+                            { $inc: { patients: 1 } }
+                        );
+                    } catch (updateErr) {
+                        console.log("Failed to update doctor patient count:", updateErr);
+                    }
                 }
 
                 res.send({ message: "Appointment status updated successfully" });
@@ -267,9 +465,9 @@ async function run() {
                     return res.status(400).send({ error: "Invalid payment status" });
                 }
 
-                const updateData = { 
-                    paymentStatus: paymentStatus, 
-                    updatedAt: new Date() 
+                const updateData = {
+                    paymentStatus: paymentStatus,
+                    updatedAt: new Date()
                 };
 
                 if (paymentId) updateData.paymentId = paymentId;
@@ -291,7 +489,7 @@ async function run() {
                 }
 
                 console.log(`Payment status updated successfully for appointment ${id}`);
-                res.send({ 
+                res.send({
                     message: "Payment status updated successfully",
                     updated: result.modifiedCount > 0
                 });
@@ -306,7 +504,7 @@ async function run() {
             try {
                 const { id } = req.params;
                 const result = await appointmentsCollection.deleteOne({ _id: new ObjectId(id) });
-                
+
                 if (result.deletedCount === 0) {
                     return res.status(404).send({ error: "Appointment not found" });
                 }
@@ -323,7 +521,7 @@ async function run() {
             try {
                 const { id } = req.params;
                 const appointment = await appointmentsCollection.findOne({ _id: new ObjectId(id) });
-                
+
                 if (!appointment) {
                     return res.status(404).send({ error: "Appointment not found" });
                 }
