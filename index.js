@@ -127,6 +127,33 @@ async function run() {
         });
 
 
+        /* ===================Manage User Function========================== */
+
+        // Get all users
+        app.get("/users", async (req, res) => {
+            const users = await client.db("healthCave").collection("users").find().toArray();
+            res.send(users);
+        });
+
+        // Make user admin
+        app.patch("/users/admin/:id", async (req, res) => {
+            const { id } = req.params;
+            const result = await client.db("healthCave").collection("users").updateOne(
+                { _id: new ObjectId(id) },
+                { $set: { role: "admin" } }
+            );
+            res.send(result);
+        });
+
+        // Delete user
+        app.delete("/users/:id", async (req, res) => {
+            const { id } = req.params;
+            const result = await client.db("healthCave").collection("users").deleteOne({ _id: new ObjectId(id) });
+            res.send(result);
+        });
+
+
+
 
 
 
