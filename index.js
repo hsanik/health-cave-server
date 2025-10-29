@@ -533,6 +533,176 @@ async function run() {
             }
         });
 
+        /* ================Prescription Management================== */
+        const prescriptionsCollection = client.db("healthCave").collection("prescriptions");
+
+        // Helper function to generate prescription number
+        const generatePrescriptionNumber = async () => {
+            const year = new Date().getFullYear();
+            const count = await prescriptionsCollection.countDocuments();
+            const number = String(count + 1).padStart(6, '0');
+            return `RX-${year}-${number}`;
+        };
+
+        // POST create prescription
+        app.post("/prescriptions", async (req, res) => {
+            try {
+                const prescriptionData = req.body;
+
+                // Generate unique prescription number
+                prescriptionData.prescriptionNumber = await generatePrescriptionNumber();
+
+                // Add default fields
+                prescriptionData.createdAt = new Date();
+                prescriptionData.updatedAt = new Date();
+                prescriptionData.status = prescriptionData.status || "active";
+                
+                // Set expiration date (90 days from creation)
+                const expiresAt = new Date();
+                expiresAt.setDate(expiresAt.getDate() + 90);
+                prescriptionData.expiresAt = expiresAt;
+
+                prescriptionData.verified = true;
+
+                const result = await prescriptionsCollection.insertOne(prescriptionData);
+                res.status(201).send(result);
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to create prescription" });
+            }
+        });
+
+        // GET all prescriptions (admin only)
+        app.get("/prescriptions", async (req, res) => {
+            try {
+                const result = await prescriptionsCollection.find().sort({ createdAt: -1 }).toArray();
+                res.send(result);
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to fetch prescriptions" });
+            }
+        });
+
+        // GET prescriptions by doctor ID
+        app.get("/prescriptions/doctor/:doctorId", async (req, res) => {
+            try {
+                const { doctorId } = req.params;
+                const result = await prescriptionsCollection
+                    .find({ doctorId: doctorId })
+                    .sort({ createdAt: -1 })
+                    .toArray();
+                res.send(result);
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to fetch doctor prescriptions" });
+            }
+        });
+
+        // GET prescriptions by patient ID
+        app.get("/prescriptions/patient/:patientId", async (req, res) => {
+            try {
+                const { patientId } = req.params;
+                const result = await prescriptionsCollection
+                    .find({ patientId: patientId })
+                    .sort({ createdAt: -1 })
+                    .toArray();
+                res.send(result);
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to fetch patient prescriptions" });
+            }
+        });
+
+        // GET single prescription by ID
+        app.get("/prescriptions/:id", async (req, res) => {
+            try {
+                const { id } = req.params;
+                const prescription = await prescriptionsCollection.findOne({ _id: new ObjectId(id) });
+
+                if (!prescription) {
+                    return res.status(404).send({ error: "Prescription not found" });
+                }
+
+                res.send(prescription);
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to fetch prescription" });
+            }
+        });
+
+        // PUT update prescription
+        app.put("/prescriptions/:id", async (req, res) => {
+            try {
+                const { id } = req.params;
+                const updateData = req.body;
+
+                // Remove fields that shouldn't be updated
+                delete updateData._id;
+                delete updateData.prescriptionNumber;
+                delete updateData.createdAt;
+
+                // Update timestamp
+                updateData.updatedAt = new Date();
+
+                const result = await prescriptionsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: updateData }
+                );
+
+                if (result.matchedCount === 0) {
+                    return res.status(404).send({ error: "Prescription not found" });
+                }
+
+                res.send({ message: "Prescription updated successfully" });
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to update prescription" });
+            }
+        });
+
+        // PUT update prescription status
+        app.put("/prescriptions/:id/status", async (req, res) => {
+            try {
+                const { id } = req.params;
+                const { status } = req.body;
+
+                if (!["active", "expired", "cancelled"].includes(status)) {
+                    return res.status(400).send({ error: "Invalid status" });
+                }
+
+                const result = await prescriptionsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: { status: status, updatedAt: new Date() } }
+                );
+
+                if (result.matchedCount === 0) {
+                    return res.status(404).send({ error: "Prescription not found" });
+                }
+
+                res.send({ message: "Prescription status updated successfully" });
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to update prescription status" });
+            }
+        });
+
+        // DELETE prescription
+        app.delete("/prescriptions/:id", async (req, res) => {
+            try {
+                const { id } = req.params;
+                const result = await prescriptionsCollection.deleteOne({ _id: new ObjectId(id) });
+
+                if (result.deletedCount === 0) {
+                    return res.status(404).send({ error: "Prescription not found" });
+                }
+
+                res.send({ message: "Prescription deleted successfully" });
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to delete prescription" });
+            }
+        });
+
         await client.db("admin").command({ ping: 1 });
         console.log("Pinged your deployment. You successfully connected to MongoDB!");
 
