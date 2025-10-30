@@ -692,8 +692,16 @@ async function run() {
                     }
 
                     // Auto-fill patient info from appointment
-                    prescriptionData.patientId = appointment.userId || appointment.patientEmail || prescriptionData.patientId;
+                    console.log("Appointment data:", {
+                        userId: appointment.userId,
+                        patientEmail: appointment.patientEmail,
+                        patientName: appointment.patientName
+                    });
+                    
+                    prescriptionData.patientId = appointment.userId || appointment.patientEmail || appointment.userEmail || prescriptionData.patientId;
                     prescriptionData.patientName = appointment.patientName || prescriptionData.patientName;
+                    
+                    console.log("Prescription will be saved with patientId:", prescriptionData.patientId);
                 } else {
                     // No appointment selected - manual entry allowed
                     prescriptionData.appointmentId = null;
@@ -828,10 +836,34 @@ async function run() {
         app.get("/prescriptions/patient/:patientId", async (req, res) => {
             try {
                 const { patientId } = req.params;
+                
+                console.log("Fetching prescriptions for patient:", patientId);
+                
+                // First check what prescriptions exist (for debugging)
+                const allPrescriptions = await prescriptionsCollection.find({}).limit(3).toArray();
+                console.log("Sample prescriptions in DB:", allPrescriptions.map(p => ({
+                    id: p._id,
+                    patientId: p.patientId,
+                    patientEmail: p.patientEmail,
+                    patientName: p.patientName,
+                    prescriptionNumber: p.prescriptionNumber
+                })));
+                
+                // Search by patientId, patientEmail, OR patientName (case-insensitive)
                 const result = await prescriptionsCollection
-                    .find({ patientId: patientId })
+                    .find({ 
+                        $or: [
+                            { patientId: patientId },
+                            { patientEmail: patientId },
+                            { patientId: { $regex: patientId, $options: 'i' } },
+                            { patientEmail: { $regex: patientId, $options: 'i' } },
+                            { patientName: { $regex: patientId, $options: 'i' } }
+                        ]
+                    })
                     .sort({ createdAt: -1 })
                     .toArray();
+                
+                console.log(`Found ${result.length} prescriptions for patient`);
                 res.send(result);
             } catch (err) {
                 console.error(err);
