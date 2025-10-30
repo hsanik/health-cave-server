@@ -1,12 +1,128 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+const nodemailer = require("nodemailer");
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const app = express();
 const port = process.env.PORT || 5000;
 
 app.use(cors());
 app.use(express.json());
+
+// Email transporter configuration
+const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASSWORD
+    }
+});
+
+// Email template for prescription notification
+const getPrescriptionEmailTemplate = (prescription) => {
+    return `
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background-color: #435ba1; color: white; padding: 20px; text-align: center; }
+        .content { background-color: #f9f9f9; padding: 20px; margin-top: 20px; }
+        .prescription-info { background-color: white; padding: 15px; margin: 10px 0; border-left: 4px solid #435ba1; }
+        .medication { background-color: #e8f4f8; padding: 10px; margin: 5px 0; border-radius: 5px; }
+        .footer { text-align: center; margin-top: 20px; font-size: 12px; color: #666; }
+        .button { display: inline-block; padding: 10px 20px; background-color: #435ba1; color: white; text-decoration: none; border-radius: 5px; margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>New Prescription Issued</h1>
+            <p>Prescription #: ${prescription.prescriptionNumber}</p>
+        </div>
+        
+        <div class="content">
+            <h2>Dear ${prescription.patientName},</h2>
+            <p>A new prescription has been issued for you by <strong>${prescription.doctorName}</strong> (${prescription.doctorSpecialization}).</p>
+            
+            <div class="prescription-info">
+                <h3>Prescription Details</h3>
+                <p><strong>Date Issued:</strong> ${new Date(prescription.createdAt).toLocaleDateString()}</p>
+                <p><strong>Valid Until:</strong> ${new Date(prescription.expiresAt).toLocaleDateString()}</p>
+                <p><strong>Diagnosis:</strong> ${prescription.diagnosis}</p>
+            </div>
+            
+            <div class="prescription-info">
+                <h3>Prescribed Medications</h3>
+                ${prescription.medications.map((med, index) => `
+                    <div class="medication">
+                        <strong>${index + 1}. ${med.name}</strong><br>
+                        Dosage: ${med.dosage}<br>
+                        Frequency: ${med.frequency}<br>
+                        ${med.duration ? `Duration: ${med.duration}<br>` : ''}
+                        ${med.instructions ? `Instructions: ${med.instructions}` : ''}
+                    </div>
+                `).join('')}
+            </div>
+            
+            ${prescription.labTests && prescription.labTests.length > 0 ? `
+                <div class="prescription-info">
+                    <h3>Recommended Lab Tests</h3>
+                    <ul>
+                        ${prescription.labTests.map(test => `<li>${test}</li>`).join('')}
+                    </ul>
+                </div>
+            ` : ''}
+            
+            ${prescription.followUpDate ? `
+                <div class="prescription-info">
+                    <h3>Follow-up Appointment</h3>
+                    <p>${new Date(prescription.followUpDate).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
+                </div>
+            ` : ''}
+            
+            ${prescription.notes ? `
+                <div class="prescription-info">
+                    <h3>Additional Notes</h3>
+                    <p>${prescription.notes}</p>
+                </div>
+            ` : ''}
+            
+            <p style="text-align: center;">
+                <a href="${process.env.FRONTEND_URL}/dashboard/my-prescriptions" class="button">View Prescription Online</a>
+            </p>
+        </div>
+        
+        <div class="footer">
+            <p>This is an automated email. Please do not reply to this message.</p>
+            <p>For any queries, please contact your doctor or visit our website.</p>
+            <p>&copy; ${new Date().getFullYear()} Health Cave. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>
+    `;
+};
+
+// Function to send prescription email
+const sendPrescriptionEmail = async (prescription) => {
+    try {
+        const mailOptions = {
+            from: `"Health Cave" <${process.env.EMAIL_USER}>`,
+            to: prescription.patientId,
+            subject: `New Prescription Issued - ${prescription.prescriptionNumber}`,
+            html: getPrescriptionEmailTemplate(prescription)
+        };
+
+        const info = await transporter.sendMail(mailOptions);
+        console.log('Prescription email sent:', info.messageId);
+        return { success: true, messageId: info.messageId };
+    } catch (error) {
+        console.error('Error sending prescription email:', error);
+        return { success: false, error: error.message };
+    }
+};
 
 const uri = `${process.env.MONGODB_URI}`;
 
@@ -549,6 +665,40 @@ async function run() {
             try {
                 const prescriptionData = req.body;
 
+                // BUSINESS LOGIC: Validate appointment if provided
+                if (prescriptionData.appointmentId && prescriptionData.appointmentId !== "") {
+                    const appointment = await appointmentsCollection.findOne({ 
+                        _id: new ObjectId(prescriptionData.appointmentId) 
+                    });
+
+                    if (!appointment) {
+                        return res.status(404).send({ error: "Appointment not found" });
+                    }
+
+                    // Check if appointment is paid (recommended but not required)
+                    if (appointment.paymentStatus !== 'paid') {
+                        console.warn('Warning: Creating prescription for unpaid appointment');
+                        // Allow but log warning
+                    }
+
+                    // Check if appointment belongs to this doctor
+                    // Find doctor by email to get their _id
+                    const doctor = await doctorsCollection.findOne({ email: prescriptionData.doctorId });
+                    
+                    if (doctor && appointment.doctorId !== doctor._id.toString()) {
+                        return res.status(403).send({ 
+                            error: "Unauthorized. This appointment is not assigned to you." 
+                        });
+                    }
+
+                    // Auto-fill patient info from appointment
+                    prescriptionData.patientId = appointment.userId || appointment.patientEmail || prescriptionData.patientId;
+                    prescriptionData.patientName = appointment.patientName || prescriptionData.patientName;
+                } else {
+                    // No appointment selected - manual entry allowed
+                    prescriptionData.appointmentId = null;
+                }
+
                 // Generate unique prescription number
                 prescriptionData.prescriptionNumber = await generatePrescriptionNumber();
 
@@ -564,11 +714,87 @@ async function run() {
 
                 prescriptionData.verified = true;
 
+                // Hide sensitive doctor contact info (prevent outside deals)
+                prescriptionData.doctorContactHidden = true;
+
                 const result = await prescriptionsCollection.insertOne(prescriptionData);
+                
+                // Update appointment status to include prescription
+                if (prescriptionData.appointmentId) {
+                    await appointmentsCollection.updateOne(
+                        { _id: new ObjectId(prescriptionData.appointmentId) },
+                        { 
+                            $set: { 
+                                prescriptionId: result.insertedId,
+                                prescriptionIssued: true,
+                                updatedAt: new Date()
+                            } 
+                        }
+                    );
+                }
+                
+                // Get the created prescription with its ID
+                const createdPrescription = await prescriptionsCollection.findOne({ 
+                    _id: result.insertedId 
+                });
+
+                // Send email notification to patient (async, don't wait)
+                if (prescriptionData.patientId && prescriptionData.patientId.includes('@')) {
+                    sendPrescriptionEmail(createdPrescription).catch(err => {
+                        console.error('Failed to send prescription email:', err);
+                    });
+                }
+
                 res.status(201).send(result);
             } catch (err) {
                 console.error(err);
                 res.status(500).send({ error: "Failed to create prescription" });
+            }
+        });
+
+        // GET paid appointments for doctor (for prescription creation)
+        app.get("/appointments/doctor/:doctorId/paid", async (req, res) => {
+            try {
+                const { doctorId } = req.params;
+                
+                console.log("=== Fetching appointments for doctor:", doctorId);
+                
+                // First, find the doctor by email to get their _id
+                const doctor = await doctorsCollection.findOne({ email: doctorId });
+                
+                if (!doctor) {
+                    console.log("Doctor not found with email:", doctorId);
+                    return res.send([]);
+                }
+                
+                console.log("Found doctor:", doctor.name, "with _id:", doctor._id);
+                
+                // Now find appointments using doctor's _id
+                const doctorAppointments = await appointmentsCollection
+                    .find({ doctorId: doctor._id.toString() })
+                    .toArray();
+                
+                console.log(`Total appointments for doctor: ${doctorAppointments.length}`);
+                
+                if (doctorAppointments.length === 0) {
+                    console.log("No appointments found for this doctor");
+                    return res.send([]);
+                }
+                
+                // Filter out already prescribed
+                const unprescribed = doctorAppointments.filter(apt => !apt.prescriptionIssued);
+                console.log(`Appointments without prescription: ${unprescribed.length}`);
+                
+                // Prefer paid appointments
+                const paid = unprescribed.filter(apt => apt.paymentStatus === 'paid');
+                console.log(`Paid appointments: ${paid.length}`);
+                
+                const result = paid.length > 0 ? paid : unprescribed;
+                res.send(result.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
+                
+            } catch (err) {
+                console.error("Error fetching appointments:", err);
+                res.status(500).send({ error: "Failed to fetch paid appointments" });
             }
         });
 
@@ -700,6 +926,39 @@ async function run() {
             } catch (err) {
                 console.error(err);
                 res.status(500).send({ error: "Failed to delete prescription" });
+            }
+        });
+
+        // POST send prescription email
+        app.post("/prescriptions/:id/send-email", async (req, res) => {
+            try {
+                const { id } = req.params;
+                const prescription = await prescriptionsCollection.findOne({ _id: new ObjectId(id) });
+
+                if (!prescription) {
+                    return res.status(404).send({ error: "Prescription not found" });
+                }
+
+                if (!prescription.patientId || !prescription.patientId.includes('@')) {
+                    return res.status(400).send({ error: "Invalid patient email address" });
+                }
+
+                const emailResult = await sendPrescriptionEmail(prescription);
+
+                if (emailResult.success) {
+                    res.send({ 
+                        message: "Prescription email sent successfully",
+                        messageId: emailResult.messageId 
+                    });
+                } else {
+                    res.status(500).send({ 
+                        error: "Failed to send email",
+                        details: emailResult.error 
+                    });
+                }
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to send prescription email" });
             }
         });
 
