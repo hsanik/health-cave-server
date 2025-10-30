@@ -665,6 +665,35 @@ async function run() {
             try {
                 const prescriptionData = req.body;
 
+                // BUSINESS LOGIC: Validate appointment exists and is paid
+                if (prescriptionData.appointmentId) {
+                    const appointment = await appointmentsCollection.findOne({ 
+                        _id: new ObjectId(prescriptionData.appointmentId) 
+                    });
+
+                    if (!appointment) {
+                        return res.status(404).send({ error: "Appointment not found" });
+                    }
+
+                    // Check if appointment is paid
+                    if (appointment.paymentStatus !== 'paid') {
+                        return res.status(403).send({ 
+                            error: "Cannot create prescription. Appointment payment not completed." 
+                        });
+                    }
+
+                    // Check if appointment belongs to this doctor
+                    if (appointment.doctorId !== prescriptionData.doctorId) {
+                        return res.status(403).send({ 
+                            error: "Unauthorized. This appointment is not assigned to you." 
+                        });
+                    }
+
+                    // Auto-fill patient info from appointment
+                    prescriptionData.patientId = appointment.userId || appointment.patientEmail;
+                    prescriptionData.patientName = appointment.patientName || prescriptionData.patientName;
+                }
+
                 // Generate unique prescription number
                 prescriptionData.prescriptionNumber = await generatePrescriptionNumber();
 
@@ -680,7 +709,24 @@ async function run() {
 
                 prescriptionData.verified = true;
 
+                // Hide sensitive doctor contact info (prevent outside deals)
+                prescriptionData.doctorContactHidden = true;
+
                 const result = await prescriptionsCollection.insertOne(prescriptionData);
+                
+                // Update appointment status to include prescription
+                if (prescriptionData.appointmentId) {
+                    await appointmentsCollection.updateOne(
+                        { _id: new ObjectId(prescriptionData.appointmentId) },
+                        { 
+                            $set: { 
+                                prescriptionId: result.insertedId,
+                                prescriptionIssued: true,
+                                updatedAt: new Date()
+                            } 
+                        }
+                    );
+                }
                 
                 // Get the created prescription with its ID
                 const createdPrescription = await prescriptionsCollection.findOne({ 
@@ -698,6 +744,25 @@ async function run() {
             } catch (err) {
                 console.error(err);
                 res.status(500).send({ error: "Failed to create prescription" });
+            }
+        });
+
+        // GET paid appointments for doctor (for prescription creation)
+        app.get("/appointments/doctor/:doctorId/paid", async (req, res) => {
+            try {
+                const { doctorId } = req.params;
+                const result = await appointmentsCollection
+                    .find({ 
+                        doctorId: doctorId,
+                        paymentStatus: 'paid',
+                        prescriptionIssued: { $ne: true }  // Not yet prescribed
+                    })
+                    .sort({ createdAt: -1 })
+                    .toArray();
+                res.send(result);
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to fetch paid appointments" });
             }
         });
 
