@@ -665,8 +665,8 @@ async function run() {
             try {
                 const prescriptionData = req.body;
 
-                // BUSINESS LOGIC: Validate appointment exists and is paid
-                if (prescriptionData.appointmentId) {
+                // BUSINESS LOGIC: Validate appointment if provided
+                if (prescriptionData.appointmentId && prescriptionData.appointmentId !== "") {
                     const appointment = await appointmentsCollection.findOne({ 
                         _id: new ObjectId(prescriptionData.appointmentId) 
                     });
@@ -675,23 +675,28 @@ async function run() {
                         return res.status(404).send({ error: "Appointment not found" });
                     }
 
-                    // Check if appointment is paid
+                    // Check if appointment is paid (recommended but not required)
                     if (appointment.paymentStatus !== 'paid') {
-                        return res.status(403).send({ 
-                            error: "Cannot create prescription. Appointment payment not completed." 
-                        });
+                        console.warn('Warning: Creating prescription for unpaid appointment');
+                        // Allow but log warning
                     }
 
                     // Check if appointment belongs to this doctor
-                    if (appointment.doctorId !== prescriptionData.doctorId) {
+                    // Find doctor by email to get their _id
+                    const doctor = await doctorsCollection.findOne({ email: prescriptionData.doctorId });
+                    
+                    if (doctor && appointment.doctorId !== doctor._id.toString()) {
                         return res.status(403).send({ 
                             error: "Unauthorized. This appointment is not assigned to you." 
                         });
                     }
 
                     // Auto-fill patient info from appointment
-                    prescriptionData.patientId = appointment.userId || appointment.patientEmail;
+                    prescriptionData.patientId = appointment.userId || appointment.patientEmail || prescriptionData.patientId;
                     prescriptionData.patientName = appointment.patientName || prescriptionData.patientName;
+                } else {
+                    // No appointment selected - manual entry allowed
+                    prescriptionData.appointmentId = null;
                 }
 
                 // Generate unique prescription number
@@ -751,17 +756,44 @@ async function run() {
         app.get("/appointments/doctor/:doctorId/paid", async (req, res) => {
             try {
                 const { doctorId } = req.params;
-                const result = await appointmentsCollection
-                    .find({ 
-                        doctorId: doctorId,
-                        paymentStatus: 'paid',
-                        prescriptionIssued: { $ne: true }  // Not yet prescribed
-                    })
-                    .sort({ createdAt: -1 })
+                
+                console.log("=== Fetching appointments for doctor:", doctorId);
+                
+                // First, find the doctor by email to get their _id
+                const doctor = await doctorsCollection.findOne({ email: doctorId });
+                
+                if (!doctor) {
+                    console.log("Doctor not found with email:", doctorId);
+                    return res.send([]);
+                }
+                
+                console.log("Found doctor:", doctor.name, "with _id:", doctor._id);
+                
+                // Now find appointments using doctor's _id
+                const doctorAppointments = await appointmentsCollection
+                    .find({ doctorId: doctor._id.toString() })
                     .toArray();
-                res.send(result);
+                
+                console.log(`Total appointments for doctor: ${doctorAppointments.length}`);
+                
+                if (doctorAppointments.length === 0) {
+                    console.log("No appointments found for this doctor");
+                    return res.send([]);
+                }
+                
+                // Filter out already prescribed
+                const unprescribed = doctorAppointments.filter(apt => !apt.prescriptionIssued);
+                console.log(`Appointments without prescription: ${unprescribed.length}`);
+                
+                // Prefer paid appointments
+                const paid = unprescribed.filter(apt => apt.paymentStatus === 'paid');
+                console.log(`Paid appointments: ${paid.length}`);
+                
+                const result = paid.length > 0 ? paid : unprescribed;
+                res.send(result.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
+                
             } catch (err) {
-                console.error(err);
+                console.error("Error fetching appointments:", err);
                 res.status(500).send({ error: "Failed to fetch paid appointments" });
             }
         });
