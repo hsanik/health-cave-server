@@ -460,6 +460,89 @@ async function run() {
             }
         });
 
+
+        /* ===============Blog ======================= */
+        const blogsCollection = client.db("healthCave").collection("blogs");
+
+        // POST - Add new blog
+        app.post("/blogs", async (req, res) => {
+            try {
+                const blog = req.body;
+                blog.createdAt = new Date();
+                const result = await blogsCollection.insertOne(blog);
+                res.status(201).send(result);
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to add blog" });
+            }
+        });
+
+        // GET - All blogs
+        app.get("/blogs", async (req, res) => {
+            try {
+                const result = await blogsCollection.find().sort({ createdAt: -1 }).toArray();
+                res.send(result);
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to fetch blogs" });
+            }
+        });
+
+        // GET - Single blog
+        app.get("/blogs/:id", async (req, res) => {
+            try {
+                const { id } = req.params;
+                const blog = await blogsCollection.findOne({ _id: new ObjectId(id) });
+                if (!blog) return res.status(404).send({ error: "Blog not found" });
+                res.send(blog);
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to fetch blog" });
+            }
+        });
+
+        // PUT - Update a blog
+        app.put("/blogs/:id", async (req, res) => {
+            try {
+                const { id } = req.params;
+                const updatedBlog = req.body;
+
+                const result = await blogsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: updatedBlog }
+                );
+
+                if (result.matchedCount === 0) {
+                    return res.status(404).send({ error: "Blog not found" });
+                }
+
+                res.send({ message: "Blog updated successfully" });
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to update blog" });
+            }
+        });
+
+        // DELETE - Remove a blog
+        app.delete("/blogs/:id", async (req, res) => {
+            try {
+                const { id } = req.params;
+
+                const result = await blogsCollection.deleteOne({ _id: new ObjectId(id) });
+
+                if (result.deletedCount === 0) {
+                    return res.status(404).send({ error: "Blog not found" });
+                }
+
+                res.send({ message: "Blog deleted successfully" });
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: "Failed to delete blog" });
+            }
+        });
+
+        
+
         /* ================Appointment Management================== */
         const appointmentsCollection = client.db("healthCave").collection("appointments");
 
